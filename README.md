@@ -15,9 +15,7 @@
 
 Most chatbots only know what fits inside their current prompt. This project gives a research agent durable memory outside the model.
 
-Before answering, the agent retrieves the most useful parts of its history. During research it can search arXiv, read papers, save evidence, and expand older summaries. After answering, it stores the conversation, extracted entities, tool results, and successful workflow for future sessions.
-
-The evidence workflow can also ingest a complete PDF page by page, chunk it with overlap, run hybrid vector and full-text retrieval, rerank candidates, produce page citations, verify every factual sentence, and expose the entire decision trace in a browser dashboard.
+Before answering, the agent retrieves the most useful parts of its history. During research it can search arXiv, read papers, save useful knowledge, and expand older summaries. After answering, it stores the conversation, extracted entities, tool results, and successful workflow for future sessions.
 
 The central idea is simple:
 
@@ -92,6 +90,8 @@ flowchart TD
 9. Save the complete tool result in PostgreSQL even when the prompt receives a truncated version.
 10. Store the answer, extracted entities, and tool workflow for future requests.
 
+This is a single-agent architecture. `ResearchAgent` coordinates one bounded Qwen tool loop; deterministic application services handle retrieval, context budgeting, tool permissions, logging, and persistence.
+
 ---
 
 ## Deterministic and agent-triggered memory
@@ -136,28 +136,6 @@ Included tools:
 
 ---
 
-## Evidence-grounded paper workflow
-
-The evidence path is intentionally stricter than normal agent chat:
-
-1. A PDF is parsed page by page with `pypdf`.
-2. Each page is split into overlapping chunks with document, source, page, and chunk metadata.
-3. PostgreSQL retrieves candidates using pgvector cosine similarity and full-text search.
-4. A local reranker combines semantic similarity, text rank, and query-term overlap.
-5. Qwen receives only the top evidence chunks and must use exact page/chunk citations.
-6. Every factual sentence is checked against its cited chunk. Failed drafts receive one repair pass; any still-unsupported claims are removed.
-7. Retrieval scores, previews, the final answer, and verification verdicts are stored in `research_evidence_trace`.
-
-Run the dashboard:
-
-```bash
-research-evidence-ui
-```
-
-Open `http://127.0.0.1:8010/`. The UI supports page-text ingestion and grounded questions, with expandable retrieval and verification traces. Complete arXiv PDFs can also be ingested through `POST /api/ingest/arxiv`.
-
----
-
 ## Project structure
 
 ```text
@@ -173,14 +151,14 @@ src/research_memory_agent/
 ├── models.py         # memory and tool contracts
 ├── prompts.py        # agent and extraction instructions
 ├── storage.py        # PostgreSQL relational and pgvector persistence
-└── tools.py          # registry and research tools
+├── tools.py          # registry and research tools
+└── web.py            # FastAPI chat API and browser interface
 
 scripts/demo.py       # original five-turn notebook demonstration
 scripts/check_pgvector.py # extension and cosine-distance smoke test
 scripts/smoke_memory.py   # live PostgreSQL + Ollama retrieval smoke test
 scripts/test_context_engineering.py # offload, budget, and source-expansion check
 scripts/report_memory_health.py # row counts across all seven memory stores
-scripts/test_evidence_workflow.py # complete arXiv paper integration test
 tests/                # dependency-light unit tests
 ```
 
@@ -201,8 +179,8 @@ The default embedding model is `qwen3-embedding:0.6b`, which produces 1,024-dime
 ## Installation
 
 ```bash
-git clone https://github.com/ravenscoat/Research-memeory-aware-agent.git
-cd Research-memeory-aware-agent
+git clone https://github.com/ravenscoat/Research-memory-aware-agent.git
+cd Research-memory-aware-agent
 
 python -m venv .venv
 ```
@@ -288,6 +266,16 @@ python scripts/demo.py
 
 The last demo question asks, “What was my first question?” after the conversation has been summarized. It demonstrates summary retrieval and just-in-time expansion.
 
+### Browser interface
+
+Start the lightweight FastAPI chat interface:
+
+```bash
+research-agent-ui
+```
+
+Open `http://127.0.0.1:8010/`. Enter a stable conversation ID when you want later questions to retrieve the same thread. The interface intentionally talks directly to the memory-aware agent; manual document-page ingestion is not part of the original notebook workflow.
+
 ---
 
 ## Reliability and safety choices
@@ -320,7 +308,6 @@ python scripts/check_pgvector.py
 python scripts/smoke_memory.py
 python scripts/test_context_engineering.py
 python scripts/report_memory_health.py
-python scripts/test_evidence_workflow.py
 ```
 
 ---
@@ -341,10 +328,13 @@ This sequence demonstrates acquisition, continuity, semantic recall, compression
 
 ## Roadmap
 
+- Chunk long papers before embedding and preserve page-level citations
 - Add more provider adapters behind the local-first LLM interface
+- Add reranking and hybrid keyword/vector retrieval
 - Add memory deduplication, supersession, confidence, and retention policies
+- Add event-driven re-embedding when a source record changes
 - Add Langfuse/OpenTelemetry tracing and evaluation datasets
-- Add document collections, filters, and bulk ingestion jobs
+- Add authentication and per-user memory namespaces
 
 ---
 

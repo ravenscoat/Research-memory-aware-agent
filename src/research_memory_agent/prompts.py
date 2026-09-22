@@ -18,6 +18,10 @@ Rules:
 4. Never claim that a tool succeeded unless its result says so.
 5. If evidence is missing, say what is missing and use an appropriate tool when available.
 6. When asked to compact the conversation, call summarize_and_store with the active thread_id.
+7. Never say that you will call a tool later. Call it in the current turn, or clearly report
+   that the tool failed and provide the failure reason.
+8. After a tool failure, do not claim that you are retrying unless you actually issue another
+   tool call in the same response.
 """.strip()
 
 ENTITY_EXTRACTION_PROMPT = """

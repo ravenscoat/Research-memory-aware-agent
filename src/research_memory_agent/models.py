@@ -24,31 +24,6 @@ class MemoryItem:
     thread_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     source_ids: list[str] = field(default_factory=list)
-    score: float | None = None
-
-
-@dataclass(frozen=True)
-class EvidenceChunk:
-    id: str
-    document_id: str
-    title: str
-    source: str
-    page_number: int
-    chunk_index: int
-    text: str
-    score: float
-
-    @property
-    def citation(self) -> str:
-        return f"[{self.title}, p. {self.page_number}, chunk {self.chunk_index}]"
-
-
-@dataclass(frozen=True)
-class ClaimVerification:
-    claim: str
-    citation: str | None
-    supported: bool
-    reason: str
 
 
 @dataclass(frozen=True)
