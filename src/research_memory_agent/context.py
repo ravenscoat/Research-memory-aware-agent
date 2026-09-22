@@ -31,8 +31,15 @@ class ContextAssembler:
 
         if ratio > self.offload_threshold:
             self.memory.summarize_thread(thread_id)
-            memory_text = self._memory_text(query, thread_id)
+            # Put the newly created summary before lower-priority recalled memories.
+            memory_text = self._memory_text(query, thread_id, compact=True)
             tokens = estimate_tokens(memory_text)
+            memory_budget = max(1, int(self.token_limit * self.offload_threshold))
+            if tokens > memory_budget:
+                # Four characters per token matches estimate_tokens. The current question is
+                # appended afterwards, so it can never be cut by this fallback bound.
+                memory_text = memory_text[: memory_budget * 4]
+                tokens = estimate_tokens(memory_text)
             ratio = tokens / self.token_limit
             offloaded = True
 
@@ -45,12 +52,15 @@ class ContextAssembler:
             offloaded=offloaded,
         )
 
-    def _memory_text(self, query: str, thread_id: str) -> str:
-        sections = [
-            self.memory.read_conversation(thread_id),
-            self.memory.read_knowledge(query),
-            self.memory.read_workflow(query),
-            self.memory.read_entities(query),
-            self.memory.read_summaries(query, thread_id),
-        ]
+    def _memory_text(self, query: str, thread_id: str, *, compact: bool = False) -> str:
+        conversation = self.memory.read_conversation(thread_id)
+        knowledge = self.memory.read_knowledge(query)
+        workflow = self.memory.read_workflow(query)
+        entities = self.memory.read_entities(query)
+        summaries = self.memory.read_summaries(query, thread_id)
+        sections = (
+            [conversation, summaries, knowledge, entities, workflow]
+            if compact
+            else [conversation, knowledge, workflow, entities, summaries]
+        )
         return "\n\n".join(sections)

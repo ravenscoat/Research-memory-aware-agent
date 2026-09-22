@@ -30,7 +30,7 @@ class OllamaChatModel:
     ) -> Any:
         payload: dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": self._ollama_messages(messages),
             "stream": False,
             "think": False,
             "options": {"temperature": 0.1},
@@ -53,6 +53,29 @@ class OllamaChatModel:
                 )
             )
         return SimpleNamespace(content=raw.get("content") or "", tool_calls=calls)
+
+    @staticmethod
+    def _ollama_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert OpenAI-style string tool arguments back to Ollama JSON objects."""
+        normalized: list[dict[str, Any]] = []
+        for source in messages:
+            message = dict(source)
+            if source.get("tool_calls"):
+                converted = []
+                for source_call in source["tool_calls"]:
+                    call = dict(source_call)
+                    function = dict(call.get("function") or {})
+                    arguments = function.get("arguments")
+                    if isinstance(arguments, str):
+                        try:
+                            function["arguments"] = json.loads(arguments)
+                        except json.JSONDecodeError:
+                            function["arguments"] = {}
+                    call["function"] = function
+                    converted.append(call)
+                message["tool_calls"] = converted
+            normalized.append(message)
+        return normalized
 
     def _text(self, system: str, user: str, *, json_format: bool = False) -> str:
         payload: dict[str, Any] = {

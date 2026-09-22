@@ -154,6 +154,8 @@ src/research_memory_agent/
 scripts/demo.py       # original five-turn notebook demonstration
 scripts/check_pgvector.py # extension and cosine-distance smoke test
 scripts/smoke_memory.py   # live PostgreSQL + Ollama retrieval smoke test
+scripts/test_context_engineering.py # offload, budget, and source-expansion check
+scripts/report_memory_health.py # row counts across all seven memory stores
 tests/                # dependency-light unit tests
 ```
 
@@ -291,6 +293,8 @@ Live infrastructure checks:
 ```bash
 python scripts/check_pgvector.py
 python scripts/smoke_memory.py
+python scripts/test_context_engineering.py
+python scripts/report_memory_health.py
 ```
 
 ---

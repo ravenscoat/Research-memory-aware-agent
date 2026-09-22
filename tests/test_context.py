@@ -37,5 +37,6 @@ def test_current_question_is_preserved_after_offload():
 
     assert memory.summarized is True
     assert bundle.offloaded is True
+    assert bundle.usage_ratio <= 0.5
     assert bundle.text.startswith("# Question\nWhat is the paper about?")
     assert "compressed" in bundle.text
