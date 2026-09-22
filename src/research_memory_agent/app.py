@@ -6,6 +6,7 @@ from .agent import ResearchAgent
 from .config import Settings
 from .context import ContextAssembler
 from .embeddings import OllamaEmbedder
+from .evidence import EvidenceGroundedResearch
 from .llm import OllamaChatModel
 from .memory import MemoryManager
 from .storage import PostgresMemoryStore
@@ -17,6 +18,7 @@ class Application:
     agent: ResearchAgent
     store: PostgresMemoryStore
     tools: ToolRegistry
+    evidence: EvidenceGroundedResearch
 
     def close(self) -> None:
         self.store.close()
@@ -52,4 +54,5 @@ def build_application(settings: Settings | None = None) -> Application:
         max_iterations=settings.max_iterations,
         tool_result_char_limit=settings.tool_result_char_limit,
     )
-    return Application(agent=agent, store=store, tools=tools)
+    evidence = EvidenceGroundedResearch(store=store, model=model)
+    return Application(agent=agent, store=store, tools=tools, evidence=evidence)

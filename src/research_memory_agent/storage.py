@@ -19,6 +19,7 @@ VECTOR_TABLES = {
 }
 CONVERSATION_TABLE = "research_conversational_memory"
 TOOL_LOG_TABLE = "research_tool_log_memory"
+TRACE_TABLE = "research_evidence_trace"
 
 
 def _vector_literal(values: list[float]) -> str:
@@ -45,7 +46,7 @@ class PostgresMemoryStore:
             yield cursor
 
     def initialize(self, *, drop_existing: bool = False) -> None:
-        tables = [CONVERSATION_TABLE, TOOL_LOG_TABLE, *VECTOR_TABLES.values()]
+        tables = [CONVERSATION_TABLE, TOOL_LOG_TABLE, TRACE_TABLE, *VECTOR_TABLES.values()]
         with self.cursor() as cursor:
             cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
             if drop_existing:
@@ -64,6 +65,12 @@ class PostgresMemoryStore:
                     result text NOT NULL, status text NOT NULL, error_message text,
                     metadata jsonb NOT NULL DEFAULT '{{}}', created_at timestamptz NOT NULL DEFAULT now())"""
             )
+            cursor.execute(
+                f"""CREATE TABLE IF NOT EXISTS {TRACE_TABLE} (
+                    id uuid PRIMARY KEY, thread_id text NOT NULL, question text NOT NULL,
+                    retrieval jsonb NOT NULL DEFAULT '[]', answer text NOT NULL,
+                    verification jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now())"""
+            )
             for table in VECTOR_TABLES.values():
                 cursor.execute(
                     f"""CREATE TABLE IF NOT EXISTS {table} (
@@ -76,6 +83,15 @@ class PostgresMemoryStore:
                     f"CREATE INDEX IF NOT EXISTS {table}_embedding_hnsw_idx "
                     f"ON {table} USING hnsw (embedding vector_cosine_ops)"
                 )
+                if table == VECTOR_TABLES[MemoryType.SEMANTIC]:
+                    cursor.execute(
+                        f"CREATE INDEX IF NOT EXISTS {table}_text_fts_idx "
+                        f"ON {table} USING gin (to_tsvector('english', text))"
+                    )
+                    cursor.execute(
+                        f"CREATE INDEX IF NOT EXISTS {table}_document_idx "
+                        f"ON {table} ((metadata->>'document_id'))"
+                    )
         self.connection.commit()
 
     def append_conversation(self, thread_id: str, role: str, content: str) -> str:
@@ -185,6 +201,67 @@ class PostgresMemoryStore:
         return [MemoryItem(id=str(r[0]), memory_type=memory_type, text=r[1], thread_id=r[2],
                            metadata=r[3] or {}, source_ids=r[4] or []) for r in rows]
 
+    def search_hybrid_evidence(self, query: str, *, limit: int = 6) -> list[MemoryItem]:
+        """Combine pgvector meaning search with PostgreSQL full-text matching, then rerank."""
+        table = VECTOR_TABLES[MemoryType.SEMANTIC]
+        candidate_limit = max(6, min(int(limit) * 4, 40))
+        vector = self._embedding(query)
+        with self.cursor() as cursor:
+            cursor.execute(
+                f"""SELECT id,text,thread_id,metadata,source_ids,
+                    1 - (embedding <=> %s::vector) AS semantic_score,
+                    ts_rank_cd(to_tsvector('english', text), websearch_to_tsquery('english', %s)) AS lexical_score
+                FROM {table}
+                WHERE active=true AND metadata->>'kind'='evidence_chunk'
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s""",
+                (vector, query, vector, candidate_limit),
+            )
+            vector_rows = cursor.fetchall()
+            cursor.execute(
+                f"""SELECT id,text,thread_id,metadata,source_ids,
+                    1 - (embedding <=> %s::vector) AS semantic_score,
+                    ts_rank_cd(to_tsvector('english', text), websearch_to_tsquery('english', %s)) AS lexical_score
+                FROM {table}
+                WHERE active=true AND metadata->>'kind'='evidence_chunk'
+                    AND to_tsvector('english', text) @@ websearch_to_tsquery('english', %s)
+                ORDER BY lexical_score DESC
+                LIMIT %s""",
+                (vector, query, query, candidate_limit),
+            )
+            lexical_rows = cursor.fetchall()
+
+        merged = {str(row[0]): row for row in [*vector_rows, *lexical_rows]}
+        query_terms = {term.lower() for term in query.split() if len(term) > 2}
+
+        def score(row: Any) -> float:
+            text_terms = {term.strip(".,;:!?()[]{}\"'").lower() for term in row[1].split()}
+            overlap = len(query_terms & text_terms) / max(1, len(query_terms))
+            return 0.65 * float(row[5] or 0) + 0.25 * min(1.0, float(row[6] or 0)) + 0.10 * overlap
+
+        ranked = sorted(merged.values(), key=score, reverse=True)[: max(1, min(int(limit), 20))]
+        return [
+            MemoryItem(
+                id=str(row[0]), memory_type=MemoryType.SEMANTIC, text=row[1], thread_id=row[2],
+                metadata=row[3] or {}, source_ids=row[4] or [], score=score(row),
+            )
+            for row in ranked
+        ]
+
+    def deactivate_document_chunks(self, document_id: str) -> int:
+        """Supersede an earlier active index of the same document without deleting audit history."""
+        table = VECTOR_TABLES[MemoryType.SEMANTIC]
+        with self.cursor() as cursor:
+            cursor.execute(
+                f"UPDATE {table} SET active=false "
+                "WHERE active=true AND metadata->>'kind'='evidence_chunk' "
+                "AND metadata->>'document_id'=%s",
+                (document_id,),
+            )
+            changed = cursor.rowcount
+        self.connection.commit()
+        return changed
+
     def get_vector(self, memory_type: MemoryType, memory_id: str) -> MemoryItem | None:
         with self.cursor() as cursor:
             cursor.execute(
@@ -213,6 +290,33 @@ class PostgresMemoryStore:
             )
         self.connection.commit()
         return log_id
+
+    def write_evidence_trace(
+        self, *, thread_id: str, question: str, retrieval: list[dict[str, Any]],
+        answer: str, verification: list[dict[str, Any]],
+    ) -> str:
+        trace_id = str(uuid.uuid4())
+        with self.cursor() as cursor:
+            cursor.execute(
+                f"INSERT INTO {TRACE_TABLE} (id,thread_id,question,retrieval,answer,verification) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (trace_id, thread_id, question, Jsonb(retrieval), answer, Jsonb(verification)),
+            )
+        self.connection.commit()
+        return trace_id
+
+    def recent_evidence_traces(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        with self.cursor() as cursor:
+            cursor.execute(
+                f"SELECT id,thread_id,question,retrieval,answer,verification,created_at FROM {TRACE_TABLE} "
+                "ORDER BY created_at DESC LIMIT %s", (max(1, min(int(limit), 100)),)
+            )
+            rows = cursor.fetchall()
+        return [
+            {"id": str(row[0]), "thread_id": row[1], "question": row[2], "retrieval": row[3],
+             "answer": row[4], "verification": row[5], "created_at": row[6].isoformat()}
+            for row in rows
+        ]
 
     def close(self) -> None:
         self.connection.close()

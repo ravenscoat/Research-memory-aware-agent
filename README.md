@@ -17,6 +17,8 @@ Most chatbots only know what fits inside their current prompt. This project give
 
 Before answering, the agent retrieves the most useful parts of its history. During research it can search arXiv, read papers, save evidence, and expand older summaries. After answering, it stores the conversation, extracted entities, tool results, and successful workflow for future sessions.
 
+The evidence workflow can also ingest a complete PDF page by page, chunk it with overlap, run hybrid vector and full-text retrieval, rerank candidates, produce page citations, verify every factual sentence, and expose the entire decision trace in a browser dashboard.
+
 The central idea is simple:
 
 > Store everything durably, retrieve only what is relevant, and never confuse an LLM's context window with long-term memory.
@@ -134,6 +136,28 @@ Included tools:
 
 ---
 
+## Evidence-grounded paper workflow
+
+The evidence path is intentionally stricter than normal agent chat:
+
+1. A PDF is parsed page by page with `pypdf`.
+2. Each page is split into overlapping chunks with document, source, page, and chunk metadata.
+3. PostgreSQL retrieves candidates using pgvector cosine similarity and full-text search.
+4. A local reranker combines semantic similarity, text rank, and query-term overlap.
+5. Qwen receives only the top evidence chunks and must use exact page/chunk citations.
+6. Every factual sentence is checked against its cited chunk. Failed drafts receive one repair pass; any still-unsupported claims are removed.
+7. Retrieval scores, previews, the final answer, and verification verdicts are stored in `research_evidence_trace`.
+
+Run the dashboard:
+
+```bash
+research-evidence-ui
+```
+
+Open `http://127.0.0.1:8010/`. The UI supports page-text ingestion and grounded questions, with expandable retrieval and verification traces. Complete arXiv PDFs can also be ingested through `POST /api/ingest/arxiv`.
+
+---
+
 ## Project structure
 
 ```text
@@ -156,6 +180,7 @@ scripts/check_pgvector.py # extension and cosine-distance smoke test
 scripts/smoke_memory.py   # live PostgreSQL + Ollama retrieval smoke test
 scripts/test_context_engineering.py # offload, budget, and source-expansion check
 scripts/report_memory_health.py # row counts across all seven memory stores
+scripts/test_evidence_workflow.py # complete arXiv paper integration test
 tests/                # dependency-light unit tests
 ```
 
@@ -295,6 +320,7 @@ python scripts/check_pgvector.py
 python scripts/smoke_memory.py
 python scripts/test_context_engineering.py
 python scripts/report_memory_health.py
+python scripts/test_evidence_workflow.py
 ```
 
 ---
@@ -315,12 +341,10 @@ This sequence demonstrates acquisition, continuity, semantic recall, compression
 
 ## Roadmap
 
-- Chunk long papers before embedding and preserve page-level citations
 - Add more provider adapters behind the local-first LLM interface
-- Add reranking and hybrid keyword/vector retrieval
 - Add memory deduplication, supersession, confidence, and retention policies
 - Add Langfuse/OpenTelemetry tracing and evaluation datasets
-- Add a FastAPI service and lightweight research workspace UI
+- Add document collections, filters, and bulk ingestion jobs
 
 ---
 

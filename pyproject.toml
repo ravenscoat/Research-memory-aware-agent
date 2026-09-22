@@ -14,6 +14,8 @@ dependencies = [
   "psycopg[binary]>=3.2,<4",
   "pypdf>=5,<7",
   "python-dotenv>=1,<2",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.30,<1",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +23,7 @@ dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
 
 [project.scripts]
 research-agent = "research_memory_agent.cli:main"
+research-evidence-ui = "research_memory_agent.web:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
