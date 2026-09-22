@@ -1,4 +1,4 @@
-"""Memory-aware research agent with Oracle-backed durable context."""
+"""Memory-aware research agent with PostgreSQL-backed durable context."""
 
 from .agent import ResearchAgent
 from .config import Settings

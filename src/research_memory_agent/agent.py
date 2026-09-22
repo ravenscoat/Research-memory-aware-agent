@@ -35,7 +35,7 @@ class ResearchAgent:
         self.memory.write_message(thread_id, "user", query)
         try:
             self.memory.extract_and_write_entities(query, thread_id)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - optional enrichment must not fail the answer
             # Entity extraction is enrichment, not a prerequisite for answering.
             pass
 
@@ -75,10 +75,10 @@ class ResearchAgent:
                 try:
                     arguments = json.loads(call.function.arguments or "{}")
                     if not isinstance(arguments, dict):
-                        raise ValueError("tool arguments must be a JSON object")
+                        raise TypeError("tool arguments must be a JSON object")
                     result = self.tools.execute(name, arguments, thread_id=thread_id)
                     status, error = "success", None
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - tool boundary records all failures
                     arguments = {}
                     result = f"Error: {exc}"
                     status, error = "failed", str(exc)
@@ -112,7 +112,7 @@ class ResearchAgent:
             self.memory.write_workflow(query, steps, final_answer)
         try:
             self.memory.extract_and_write_entities(final_answer, thread_id)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - optional enrichment must not fail the answer
             pass
         self.memory.write_message(thread_id, "assistant", final_answer)
         return final_answer

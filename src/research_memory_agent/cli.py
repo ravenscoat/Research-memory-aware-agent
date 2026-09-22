@@ -8,10 +8,10 @@ from .app import build_application
 
 
 def parser() -> argparse.ArgumentParser:
-    command = argparse.ArgumentParser(description="Oracle-backed memory-aware research agent")
+    command = argparse.ArgumentParser(description="PostgreSQL-backed memory-aware research agent")
     command.add_argument("--thread", default="1", help="Conversation thread identifier")
     command.add_argument(
-        "--init-db", action="store_true", help="Create required Oracle memory tables"
+        "--init-db", action="store_true", help="Create required PostgreSQL memory tables"
     )
     command.add_argument(
         "--reset-db",

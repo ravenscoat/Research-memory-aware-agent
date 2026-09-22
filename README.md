@@ -5,8 +5,8 @@
 ### A research assistant that remembers conversations, evidence, entities, workflows, summaries, tools, and every tool execution.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![Oracle](https://img.shields.io/badge/Oracle-Vector_Search-F80000?style=flat-square&logo=oracle&logoColor=white)](https://www.oracle.com/database/ai-vector-search/)
-[![OpenAI](https://img.shields.io/badge/LLM-OpenAI-111111?style=flat-square&logo=openai&logoColor=white)](https://platform.openai.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
+[![Ollama](https://img.shields.io/badge/LLM-Qwen3_8B_Local-111111?style=flat-square)](https://ollama.com/library/qwen3)
 [![License](https://img.shields.io/badge/License-MIT-6e56cf?style=flat-square)](LICENSE)
 
 </div>
@@ -39,7 +39,7 @@ The agent uses seven memory categories, each with a different job:
 | **Summary** | Compressed older conversations with source references | Thread-scoped vector retrieval |
 | **Tool log** | Complete arguments, outputs, status, and errors | Exact relational audit log |
 
-Conversation and tool logs are relational because their order and identity matter. The other five stores use Oracle vectors because they are retrieved by meaning.
+Conversation and tool logs are relational because their order and identity matter. The other five stores use PostgreSQL with pgvector because they are retrieved by meaning.
 
 ---
 
@@ -48,7 +48,7 @@ Conversation and tool logs are relational because their order and identity matte
 ```mermaid
 flowchart TD
     USER[Research question] --> CTX[Context assembler]
-    ORA[(Oracle Database)] --> CTX
+    ORA[(PostgreSQL + pgvector)] --> CTX
     CTX --> LLM[LLM decision]
     LLM -->|answer| WRITE[Memory write-back]
     LLM -->|tool call| REG[Semantic tool registry]
@@ -87,7 +87,7 @@ flowchart TD
 6. Select up to five tools by comparing the question with embedded tool descriptions.
 7. Ask the LLM for either an answer or a structured tool call.
 8. Execute only registered tools and return bounded results to the model.
-9. Save the complete tool result in Oracle even when the prompt receives a truncated version.
+9. Save the complete tool result in PostgreSQL even when the prompt receives a truncated version.
 10. Store the answer, extracted entities, and tool workflow for future requests.
 
 ---
@@ -109,7 +109,7 @@ The context window is protected in three ways:
 
 1. **Selective retrieval** — only the closest memories are loaded.
 2. **Automatic offloading** — older conversation is summarized when usage crosses the configured threshold.
-3. **Tool-result bounding** — full outputs stay in Oracle while only a limited prefix is returned to the LLM.
+3. **Tool-result bounding** — full outputs stay in PostgreSQL while only a limited prefix is returned to the LLM.
 
 Summarization does not delete the original conversation. Each summary stores its source conversation IDs, allowing the system to audit what was compressed and expand details just in time.
 
@@ -143,15 +143,17 @@ src/research_memory_agent/
 ├── cli.py            # command-line interface
 ├── config.py         # environment configuration
 ├── context.py        # retrieval, budgeting, and offloading
-├── embeddings.py     # local Sentence Transformer adapter
-├── llm.py            # OpenAI chat, summary, and entity adapter
+├── embeddings.py     # local Ollama/Qwen embedding adapter
+├── llm.py            # local Ollama/Qwen chat, summary, and entity adapter
 ├── memory.py         # seven-memory application API
 ├── models.py         # memory and tool contracts
 ├── prompts.py        # agent and extraction instructions
-├── storage.py        # Oracle relational/vector persistence
+├── storage.py        # PostgreSQL relational and pgvector persistence
 └── tools.py          # registry and research tools
 
 scripts/demo.py       # original five-turn notebook demonstration
+scripts/check_pgvector.py # extension and cosine-distance smoke test
+scripts/smoke_memory.py   # live PostgreSQL + Ollama retrieval smoke test
 tests/                # dependency-light unit tests
 ```
 
@@ -160,12 +162,12 @@ tests/                # dependency-light unit tests
 ## Requirements
 
 - Python 3.11+
-- Oracle Database with AI Vector Search support
-- An Oracle user allowed to create tables
-- An OpenAI API key
+- PostgreSQL 14+ with the pgvector extension
+- Ollama with `qwen3:8b` installed
+- A PostgreSQL role allowed to create tables and enable pgvector
 - Internet access for arXiv tools and first-time embedding-model download
 
-The default embedding model is `sentence-transformers/paraphrase-mpnet-base-v2`, which produces 768-dimensional vectors locally.
+The default embedding model is `qwen3-embedding:0.6b`, which produces 1,024-dimensional vectors locally through Ollama.
 
 ---
 
@@ -197,15 +199,20 @@ cp .env.example .env
 Configure `.env`:
 
 ```dotenv
-OPENAI_API_KEY=your-key
-OPENAI_MODEL=gpt-5-mini
-
-ORACLE_USER=VECTOR
-ORACLE_PASSWORD=your-password
-ORACLE_DSN=127.0.0.1:1521/FREEPDB1
+POSTGRES_DSN=postgresql://postgres:change-me@127.0.0.1:5432/postgres
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=qwen3:8b
 ```
 
-Secrets are loaded from the environment and must not be committed.
+Then start Ollama and download the model once:
+
+```bash
+ollama serve
+ollama pull qwen3:8b
+ollama pull qwen3-embedding:0.6b
+```
+
+Install pgvector using its [official instructions](https://github.com/pgvector/pgvector#installation), then enable it in the target database with `CREATE EXTENSION vector;`. Secrets are loaded from the environment and must not be committed.
 
 ---
 
@@ -277,7 +284,14 @@ pytest -q
 ruff check .
 ```
 
-The unit suite does not require Oracle or an OpenAI key. A live end-to-end run requires both services.
+The unit suite does not require PostgreSQL or Ollama. A live end-to-end run requires both services.
+
+Live infrastructure checks:
+
+```bash
+python scripts/check_pgvector.py
+python scripts/smoke_memory.py
+```
 
 ---
 
@@ -298,7 +312,7 @@ This sequence demonstrates acquisition, continuity, semantic recall, compression
 ## Roadmap
 
 - Chunk long papers before embedding and preserve page-level citations
-- Add provider-neutral LLM and embedding interfaces
+- Add more provider adapters behind the local-first LLM interface
 - Add reranking and hybrid keyword/vector retrieval
 - Add memory deduplication, supersession, confidence, and retention policies
 - Add Langfuse/OpenTelemetry tracing and evaluation datasets
